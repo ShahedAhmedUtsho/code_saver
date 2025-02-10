@@ -1,1 +1,166 @@
 
+'use client'
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { FaTerminal, FaHourglassHalf } from 'react-icons/fa';
+import { MdClose } from 'react-icons/md';
+import axiosClient from '@/lib/axiosClient';
+import { useAuthData } from '@/providers/AuthProvider';
+import { useSiteConfigData } from '@/providers/SiteConfigProvider';
+import { motion, AnimatePresence } from 'framer-motion';
+
+const inValid = (
+  <div className="bg-[#0B0F48] inter flex justify-center items-center relative text-white/70 w-full h-full p-4 rounded-[10px]">
+    <button className="text-black justify-center items-center flex rounded-md bg-white/70 absolute top-1 right-1 p-1">
+      <MdClose />
+    </button>
+    <span className='text-6xl flex gap-3 font-bold text-white/10'>
+      <FaTerminal />
+      Not Valid
+    </span>
+  </div>
+);
+
+function TerminalMain() {
+  const searchParams = useSearchParams();
+  const booking_tracking_id = searchParams.get('booking_tracking_id');
+  const supplier_uid = searchParams.get('supplier_uid');
+  const { origin } = useSiteConfigData();
+  const { member_id } = useAuthData()?.user_data || {};
+  const [isStarting, setIsStarting] = useState(false);
+  const [tracking_id, setTracking_id] = useState(null);
+  const [session_token, setSession_token] = useState(null);
+  const [terminal_history, setTerminal_history] = useState([]);
+  const [isRunning, setIsRunning] = useState(false);
+  const [command, setCommand] = useState('');
+
+  useEffect(() => {
+    if (booking_tracking_id) {
+      startSession();
+    }
+  }, [booking_tracking_id]);
+
+  const startSession = async () => {
+    if (isStarting) return;
+
+    setIsStarting(true);
+
+    try {
+      const res = await axiosClient(origin).post("/terminal/create-session", {
+        member_id,
+        supplier_uid,
+        booking_tracking_id,
+      });
+
+      if (res.data?.status === "success") {
+        const { tracking_id, session_token } = res.data;
+
+        const res2 = await axiosClient(origin).post(
+          "/terminal/execute-command",
+          {
+            member_id,
+            tracking_id,
+            booking_tracking_id,
+            session_token,
+            terminal_command: `*${supplier_uid}`,
+          }
+        );
+
+        const { terminal_history } = res2.data;
+        setTerminal_history(terminal_history);
+
+        setTracking_id(tracking_id);
+        setSession_token(session_token);
+      } else throw new Error(res.data?.reason || "Something went wrong");
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsStarting(false);
+    }
+  };
+
+  const executeCommand = async (terminal_command) => {
+    if (isRunning) return;
+
+    setIsRunning(true);
+
+    try {
+      const res = await axiosClient(origin).post("/terminal/execute-command", {
+        member_id,
+        tracking_id,
+        session_token,
+        terminal_command,
+        booking_tracking_id,
+      });
+
+      const { terminal_history } = res.data;
+      setTerminal_history(terminal_history);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    await executeCommand(command);
+    setCommand('');
+  };
+
+  if (!booking_tracking_id) {
+    return inValid;
+  }
+
+  return (
+    <div className="bg-[#0B0F48] relative text-white/70 w-full h-full p-4 rounded-[10px]">
+      <button className="text-black justify-center items-center flex rounded-md bg-white/70 absolute top-1 right-1 p-1">
+        <MdClose />
+      </button>
+
+      <div className="h-full overflow-y-auto">
+        {terminal_history.map((item, index) => (
+          <AnimatePresence key={index}>
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3 }}
+              className="mb-2"
+            >
+              <div className="text-green-400">$ {item.terminal_command}</div>
+              <div className="text-white">{item.command_response}</div>
+            </motion.div>
+          </AnimatePresence>
+        ))}
+
+        {isStarting && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="flex items-center gap-2 text-white"
+          >
+            <FaHourglassHalf className="animate-spin" /> Starting session...
+          </motion.div>
+        )}
+
+        {tracking_id && session_token && (
+          <form onSubmit={handleSubmit} className="flex items-center gap-2">
+            <span className="text-green-400">$</span>
+            <input
+              type="text"
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+              className="flex-1 bg-transparent border-none outline-none text-white"
+              autoFocus
+            />
+            {isRunning && <FaHourglassHalf className="animate-spin" />}
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default TerminalMain;
